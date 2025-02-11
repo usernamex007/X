@@ -3,35 +3,24 @@ from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession as TelethonSession
 from pyrogram import Client
 from pyrogram.errors import SessionPasswordNeeded
-from config import API_ID, API_HASH, BOT_TOKEN, SUPPORT_GROUP, SUPPORT_CHANNEL
+from config import API_ID, API_HASH, BOT_TOKEN
 
 bot = TelegramClient("bot", API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 user_data = {}
 
 @bot.on(events.NewMessage(pattern="/start"))
 async def start(event):
-    buttons = [
-        [Button.url("💠 Support Group", SUPPORT_GROUP), Button.url("📢 Support Channel", SUPPORT_CHANNEL)],
-        [Button.inline("⚡ Generate Session", b"generate")]
-    ]
+    buttons = [[Button.inline("⚡ Generate Session", b"generate")]]
     await event.respond("👋 **Welcome!**\n\nGenerate Pyrogram V2 or Telethon session easily!", buttons=buttons)
 
 @bot.on(events.CallbackQuery)
 async def callback_handler(event):
     user_id = event.sender_id
-
     if event.data == b"generate":
-        buttons = [
-            [Button.inline("⚡ Pyrogram V2", b"pyrogram"), Button.inline("💠 Telethon", b"telethon")]
-        ]
+        buttons = [[Button.inline("⚡ Pyrogram V2", b"pyrogram"), Button.inline("💠 Telethon", b"telethon")]]
         await event.edit("🔹 **Choose Session Type:**", buttons=buttons)
-
-    elif event.data == b"pyrogram":
-        user_data[user_id] = {"type": "pyrogram"}
-        await bot.send_message(user_id, "✏️ **Enter your API ID:**")
-
-    elif event.data == b"telethon":
-        user_data[user_id] = {"type": "telethon"}
+    elif event.data in [b"pyrogram", b"telethon"]:
+        user_data[user_id] = {"type": event.data.decode()}
         await bot.send_message(user_id, "✏️ **Enter your API ID:**")
 
 @bot.on(events.NewMessage)
@@ -58,7 +47,7 @@ async def handle_input(event):
         await bot.send_message(user_id, "📩 Sending OTP...")
 
         if user_step["type"] == "pyrogram":
-            user_step["client"] = Client(name="pyro_session", api_id=user_step["api_id"], api_hash=user_step["api_hash"])
+            user_step["client"] = Client("pyro_session", user_step["api_id"], user_step["api_hash"])
         else:
             user_step["client"] = TelegramClient(TelethonSession(), user_step["api_id"], user_step["api_hash"])
 
@@ -68,8 +57,10 @@ async def handle_input(event):
         try:
             if user_step["type"] == "pyrogram":
                 code_info = await client.send_code(user_step["phone"])
+                user_step["phone_code_hash"] = code_info.phone_code_hash
             else:
-                await client.send_code_request(user_step["phone"])
+                code_info = await client.send_code_request(user_step["phone"])
+                user_step["phone_code_hash"] = code_info.phone_code_hash
 
             await bot.send_message(user_id, "🔢 **Enter the OTP received on Telegram:**")
         except Exception as e:
@@ -77,41 +68,43 @@ async def handle_input(event):
 
     elif "otp" not in user_step:
         user_step["otp"] = event.text
+        client = user_step["client"]
 
         try:
-            client = user_step["client"]
-
             if user_step["type"] == "pyrogram":
-                await client.sign_in(phone_number=user_step["phone"], phone_code=user_step["otp"])
+                await client.sign_in(phone_number=user_step["phone"], phone_code=user_step["otp"], phone_code_hash=user_step["phone_code_hash"])
                 session_string = await client.export_session_string()
             else:
-                await client.sign_in(user_step["phone"], user_step["otp"])
+                await client.sign_in(user_step["phone"], user_step["phone_code_hash"], user_step["otp"])
                 session_string = client.session.save()
 
-            await bot.send_message(user_id, f"✅ **Your {user_step['type']} session string:**\n\n`{session_string}`")
+            await bot.send_message(user_id, f"✅ **Session Generated Successfully:**\n\n`{session_string}`")
+            await client.disconnect()
             del user_data[user_id]
+
         except SessionPasswordNeeded:
-            await bot.send_message(user_id, "🔒 **Enter your 2FA Password:**")
-            user_step["need_password"] = True
+            await bot.send_message(user_id, "🔒 **Enter your 2FA password:**")
+        
         except Exception as e:
             await bot.send_message(user_id, f"❌ Error: {e}")
 
-    elif "need_password" in user_step and "2fa" not in user_step:
-        user_step["2fa"] = event.text
+    elif "password" not in user_step:
+        user_step["password"] = event.text
+        client = user_step["client"]
 
         try:
-            client = user_step["client"]
-            await client.check_password(user_step["2fa"])
-
+            await client.sign_in(password=user_step["password"])
             if user_step["type"] == "pyrogram":
                 session_string = await client.export_session_string()
             else:
                 session_string = client.session.save()
 
-            await bot.send_message(user_id, f"✅ **Your {user_step['type']} session string:**\n\n`{session_string}`")
+            await bot.send_message(user_id, f"✅ **Session Generated Successfully:**\n\n`{session_string}`")
+            await client.disconnect()
             del user_data[user_id]
+
         except Exception as e:
             await bot.send_message(user_id, f"❌ Error: {e}")
 
-print("✅ Bot is running...")
+print("Bot is running...")
 bot.run_until_disconnected()
