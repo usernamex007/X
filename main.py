@@ -84,16 +84,17 @@ async def handle_input(event):
 
         except SessionPasswordNeeded:
             await bot.send_message(user_id, "🔒 **Enter your 2FA password:**")
-        
+            user_step["waiting_for_password"] = True  # 2FA एक्टिवेटेड है  
+
         except Exception as e:
             await bot.send_message(user_id, f"❌ Error: {e}")
 
-    elif "password" not in user_step:
-        user_step["password"] = event.text
+    elif "waiting_for_password" in user_step:
+        password = event.text
         client = user_step["client"]
 
         try:
-            await client.sign_in(password=user_step["password"])
+            await client.sign_in(password=password)
             if user_step["type"] == "pyrogram":
                 session_string = await client.export_session_string()
             else:
