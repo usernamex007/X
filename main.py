@@ -1,11 +1,9 @@
 import asyncio
 from telethon import TelegramClient, events, Button
-from telethon.sessions import StringSession
-from config import API_ID, API_HASH, BOT_TOKEN, SUPPORT_GROUP, SUPPORT_CHANNEL
-
-# Pyrogram का सही फॉर्मेट वाला सेशन बनाने के लिए
+from telethon.sessions import StringSession as TelethonSession
 from pyrogram import Client
 from pyrogram.raw.functions.auth import ExportAuthorization
+from config import API_ID, API_HASH, BOT_TOKEN, SUPPORT_GROUP, SUPPORT_CHANNEL
 
 bot = TelegramClient("bot", API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 user_data = {}
@@ -13,7 +11,7 @@ user_data = {}
 @bot.on(events.NewMessage(pattern="/start"))
 async def start(event):
     buttons = [
-        [Button.url("💠 Support Group", SUPPORT_GROUP), Button.url("📢 Support Channel", SUPPORT_CHANNEL)],
+        [Button.url("💠 Group", SUPPORT_GROUP), Button.url("📢 Channel", SUPPORT_CHANNEL)],
         [Button.inline("⚡ Generate Session", b"generate")]
     ]
     await event.respond("👋 **Welcome!**\n\nGenerate Pyrogram V2 or Telethon session easily!", buttons=buttons)
@@ -28,8 +26,12 @@ async def callback_handler(event):
         ]
         await event.edit("🔹 **Choose Session Type:**", buttons=buttons)
 
-    elif event.data in [b"pyrogram", b"telethon"]:
-        user_data[user_id] = {"type": event.data.decode()}
+    elif event.data == b"pyrogram":
+        user_data[user_id] = {"type": "pyrogram"}
+        await bot.send_message(user_id, "✏️ **Enter your API ID:**")
+
+    elif event.data == b"telethon":
+        user_data[user_id] = {"type": "telethon"}
         await bot.send_message(user_id, "✏️ **Enter your API ID:**")
 
 @bot.on(events.NewMessage)
@@ -55,7 +57,10 @@ async def handle_input(event):
         user_step["phone"] = event.text
         await bot.send_message(user_id, "📩 Sending OTP...")
 
-        client = TelegramClient(StringSession(), user_step["api_id"], user_step["api_hash"])
+        if user_step["type"] == "pyrogram":
+            client = Client(name="pyro_session", api_id=user_step["api_id"], api_hash=user_step["api_hash"])
+        else:
+            client = TelegramClient(TelethonSession(), user_step["api_id"], user_step["api_hash"])
 
         try:
             await client.connect()
@@ -77,14 +82,16 @@ async def handle_input(event):
             else:
                 session_string = client.session.save()
 
-            await bot.send_message(user_id, f"✅ **Your session string:**\n\n`{session_string}`")
+            await bot.send_message(user_id, f"✅ **Your {user_step['type']} session string:**\n\n`{session_string}`")
+            del user_data[user_id]
         except Exception as e:
-            if "2FA" in str(e):
+            if "password" in str(e).lower():
                 await bot.send_message(user_id, "🔒 **Enter your 2FA Password:**")
+                user_step["need_password"] = True
             else:
                 await bot.send_message(user_id, f"❌ Error: {e}")
 
-    elif "2fa" not in user_step:
+    elif "need_password" in user_step and "2fa" not in user_step:
         user_step["2fa"] = event.text
 
         try:
@@ -96,15 +103,16 @@ async def handle_input(event):
             else:
                 session_string = client.session.save()
 
-            await bot.send_message(user_id, f"✅ **Your session string:**\n\n`{session_string}`")
+            await bot.send_message(user_id, f"✅ **Your {user_step['type']} session string:**\n\n`{session_string}`")
+            del user_data[user_id]
         except Exception as e:
             await bot.send_message(user_id, f"❌ Error: {e}")
 
 async def generate_pyrogram_session(api_id, api_hash, phone):
-    async with Client(":memory:", api_id=api_id, api_hash=api_hash) as app:
-        auth = await app.invoke(ExportAuthorization(api_id=api_id))
-        session = StringSession.save(auth.id, auth.bytes)
-        return session
+    async with Client(name="session", api_id=api_id, api_hash=api_hash) as app:
+        auth = await app.invoke(ExportAuthorization())
+        session_string = app.export_session_string()
+        return session_string
 
-print("Bot is running...")
+print("✅ Bot is running...")
 bot.run_until_disconnected()
