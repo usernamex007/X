@@ -1,9 +1,11 @@
 import asyncio
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
-from pyrogram import Client
-from pyrogram.sessions import StringSession as PyroSession
 from config import API_ID, API_HASH, BOT_TOKEN, SUPPORT_GROUP, SUPPORT_CHANNEL
+
+# Pyrogram का सही फॉर्मेट वाला सेशन बनाने के लिए
+from pyrogram import Client
+from pyrogram.raw.functions.auth import ExportAuthorization
 
 bot = TelegramClient("bot", API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 user_data = {}
@@ -11,7 +13,7 @@ user_data = {}
 @bot.on(events.NewMessage(pattern="/start"))
 async def start(event):
     buttons = [
-        [Button.url("💠 Group", SUPPORT_GROUP), Button.url("📢 Channel", SUPPORT_CHANNEL)],
+        [Button.url("💠 Support Group", SUPPORT_GROUP), Button.url("📢 Support Channel", SUPPORT_CHANNEL)],
         [Button.inline("⚡ Generate Session", b"generate")]
     ]
     await event.respond("👋 **Welcome!**\n\nGenerate Pyrogram V2 or Telethon session easily!", buttons=buttons)
@@ -71,7 +73,7 @@ async def handle_input(event):
             await client.sign_in(user_step["phone"], user_step["otp"])
 
             if user_step["type"] == "pyrogram":
-                session_string = await generate_pyrogram_session(user_step["api_id"], user_step["api_hash"])
+                session_string = await generate_pyrogram_session(user_step["api_id"], user_step["api_hash"], user_step["phone"])
             else:
                 session_string = client.session.save()
 
@@ -90,7 +92,7 @@ async def handle_input(event):
             await client.sign_in(password=user_step["2fa"])
 
             if user_step["type"] == "pyrogram":
-                session_string = await generate_pyrogram_session(user_step["api_id"], user_step["api_hash"])
+                session_string = await generate_pyrogram_session(user_step["api_id"], user_step["api_hash"], user_step["phone"])
             else:
                 session_string = client.session.save()
 
@@ -98,9 +100,11 @@ async def handle_input(event):
         except Exception as e:
             await bot.send_message(user_id, f"❌ Error: {e}")
 
-async def generate_pyrogram_session(api_id, api_hash):
-    async with Client(PyroSession(), api_id=api_id, api_hash=api_hash) as app:
-        return app.export_session_string()
+async def generate_pyrogram_session(api_id, api_hash, phone):
+    async with Client(":memory:", api_id=api_id, api_hash=api_hash) as app:
+        auth = await app.invoke(ExportAuthorization(api_id=api_id))
+        session = StringSession.save(auth.id, auth.bytes)
+        return session
 
 print("Bot is running...")
 bot.run_until_disconnected()
