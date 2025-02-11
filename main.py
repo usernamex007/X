@@ -2,7 +2,7 @@ import asyncio
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession as TelethonSession
 from pyrogram import Client
-from pyrogram.raw.functions.auth import ExportAuthorization
+from pyrogram.errors import SessionPasswordNeeded
 from config import API_ID, API_HASH, BOT_TOKEN, SUPPORT_GROUP, SUPPORT_CHANNEL
 
 bot = TelegramClient("bot", API_ID, API_HASH).start(bot_token=BOT_TOKEN)
@@ -11,7 +11,7 @@ user_data = {}
 @bot.on(events.NewMessage(pattern="/start"))
 async def start(event):
     buttons = [
-        [Button.url("💠 Group", SUPPORT_GROUP), Button.url("📢 Channel", SUPPORT_CHANNEL)],
+        [Button.url("💠 Support Group", SUPPORT_GROUP), Button.url("📢 Support Channel", SUPPORT_CHANNEL)],
         [Button.inline("⚡ Generate Session", b"generate")]
     ]
     await event.respond("👋 **Welcome!**\n\nGenerate Pyrogram V2 or Telethon session easily!", buttons=buttons)
@@ -58,14 +58,19 @@ async def handle_input(event):
         await bot.send_message(user_id, "📩 Sending OTP...")
 
         if user_step["type"] == "pyrogram":
-            client = Client(name="pyro_session", api_id=user_step["api_id"], api_hash=user_step["api_hash"])
+            user_step["client"] = Client(name="pyro_session", api_id=user_step["api_id"], api_hash=user_step["api_hash"])
         else:
-            client = TelegramClient(TelethonSession(), user_step["api_id"], user_step["api_hash"])
+            user_step["client"] = TelegramClient(TelethonSession(), user_step["api_id"], user_step["api_hash"])
+
+        client = user_step["client"]
+        await client.connect()
 
         try:
-            await client.connect()
-            user_step["client"] = client
-            await client.send_code_request(user_step["phone"])
+            if user_step["type"] == "pyrogram":
+                code_info = await client.send_code(user_step["phone"])
+            else:
+                await client.send_code_request(user_step["phone"])
+
             await bot.send_message(user_id, "🔢 **Enter the OTP received on Telegram:**")
         except Exception as e:
             await bot.send_message(user_id, f"❌ Error: {e}")
@@ -75,31 +80,31 @@ async def handle_input(event):
 
         try:
             client = user_step["client"]
-            await client.sign_in(user_step["phone"], user_step["otp"])
 
             if user_step["type"] == "pyrogram":
-                session_string = await generate_pyrogram_session(user_step["api_id"], user_step["api_hash"], user_step["phone"])
+                await client.sign_in(phone_number=user_step["phone"], phone_code=user_step["otp"])
+                session_string = await client.export_session_string()
             else:
+                await client.sign_in(user_step["phone"], user_step["otp"])
                 session_string = client.session.save()
 
             await bot.send_message(user_id, f"✅ **Your {user_step['type']} session string:**\n\n`{session_string}`")
             del user_data[user_id]
+        except SessionPasswordNeeded:
+            await bot.send_message(user_id, "🔒 **Enter your 2FA Password:**")
+            user_step["need_password"] = True
         except Exception as e:
-            if "password" in str(e).lower():
-                await bot.send_message(user_id, "🔒 **Enter your 2FA Password:**")
-                user_step["need_password"] = True
-            else:
-                await bot.send_message(user_id, f"❌ Error: {e}")
+            await bot.send_message(user_id, f"❌ Error: {e}")
 
     elif "need_password" in user_step and "2fa" not in user_step:
         user_step["2fa"] = event.text
 
         try:
             client = user_step["client"]
-            await client.sign_in(password=user_step["2fa"])
+            await client.check_password(user_step["2fa"])
 
             if user_step["type"] == "pyrogram":
-                session_string = await generate_pyrogram_session(user_step["api_id"], user_step["api_hash"], user_step["phone"])
+                session_string = await client.export_session_string()
             else:
                 session_string = client.session.save()
 
@@ -107,12 +112,6 @@ async def handle_input(event):
             del user_data[user_id]
         except Exception as e:
             await bot.send_message(user_id, f"❌ Error: {e}")
-
-async def generate_pyrogram_session(api_id, api_hash, phone):
-    async with Client(name="session", api_id=api_id, api_hash=api_hash) as app:
-        auth = await app.invoke(ExportAuthorization())
-        session_string = app.export_session_string()
-        return session_string
 
 print("✅ Bot is running...")
 bot.run_until_disconnected()
